@@ -140,7 +140,7 @@ class PLS:
         get_vip(): return VIP score.
 
     Examples:
-        pls = PLS(x1, y1)
+        pls = PLS()
         pls.fit(x1, y1)
         y2_pred = pls.predict(x2)
         vip = pls.get_vip()
