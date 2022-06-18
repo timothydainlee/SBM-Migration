@@ -14,7 +14,8 @@ def quantilenorm(x, average="mean"):
             average method. "mean" or "median"
 
     Returns:
-        x_norm (np.ndarray): normalized array.
+        x_norm: np.ndarray
+            normalized array.
 
     Raises:
         TypeError: if x not np.ndarray.
