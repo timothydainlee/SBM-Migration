@@ -35,19 +35,19 @@ def pvalue_integration(p, method="fisher"):
         z = -2 * np.log(p)
         df = np.sum(~np.isnan(z), axis=1)
         z = np.nansum(z, axis=1)
-        y = 1 - chi2.cdf(z, 2*df)
+        p_norm = 1 - chi2.cdf(z, 2*df)
     elif method == "MG":
         z = np.log(p/(1-p))
         df = np.sum(~np.isnan(z), axis=1)
         z = np.nansum(z, axis=1) * (-1)*np.sqrt((15*df+12)/((5*df+2)*df*np.pi**2))
-        y = 1 - t.cdf(z, 5*df+4)
+        p_norm = 1 - t.cdf(z, 5*df+4)
     elif method == "stouffer":
         z = (-1) * norm.ppf(p)
         df = np.sum(~np.isnan(z), axis=1)
         z = np.nansum(z, axis=1) / np.sqrt(df)
-        y = 1 - norm.cdf(z)
+        p_norm = 1 - norm.cdf(z)
     else:
         raise ValueError(f"method must be either 'fisher', 'MG', 'stouffer'")
     
-    return y
+    return p_norm
 
