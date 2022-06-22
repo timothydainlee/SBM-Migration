@@ -9,9 +9,9 @@ def quantilenorm(x, average="mean"):
 
     Arguments:
         x: np.ndarray
-            input array
+            input array.
         average: str, default="mean"
-            average method. "mean" or "median"
+            average method. "mean" or "median".
 
     Returns:
         x_norm: np.ndarray
@@ -71,6 +71,130 @@ def quantilenorm(x, average="mean"):
                                               mean_val)
 
     return x_norm
+
+
+def segmented_quantile_normalization(x, segment_size=4, stride=2, error_criterion=1e-4, max_iter=100):
+    """
+    Performs segmented 2d quantile normalization.
+
+    Arguments:
+        x: list of list
+            input time series.
+        segment_size: int, default=4
+            segment size.
+        stride: int, default=2
+            stride size.
+        error_criterion: float, default=1e-4
+            stop iteration criterion.
+        max_iter: int, default=100
+            maximum iteration steps.
+
+    Returns:
+        x: list of list
+            normalized time series.
+        num_iteration: int
+            number of iterations. max_iter if not converged.
+        error: float
+            Root Mean Squared Error
+    """
+
+    x_norm = x.copy()
+    # padding according to segment_size, stride
+    for i, p in enumerate(x):
+        if len(p) < segment_size:
+            num = segment_size - len(p)
+        elif (segment_size-len(p)) % stride != 0:
+            num = (segment_size-len(p)) % stride
+        else:
+            num = 0
+        x[i] = p + [np.nan] * num
+
+    # get number of occurrences for each time
+    nums = (((np.array(list(map(len, x)))) - segment_size) / stride + 1).astype(int)
+    max_nums = max(nums)
+    time_nums = [np.sum(nums > i) for i in range(max(nums))]
+
+    # count number of comparisons
+    number_of_comparisons = sum((nums-1) * (segment_size-strid))
+
+    # reshape by time
+    ts = np.empty([len(x) * segment_size, max_nums])
+    ts[:] = np.nan
+    for i, p in enumerate(x):
+        for j in range(nums[i]):
+            ts[segment_size*i:segment_size*(i+1), j] = p[stride*j:stride*j+segment_size]
+
+    # prepare reshape_idx for: reshape by size
+    idx = 0
+    aug_num = 0
+    reshape_idx = []
+    for i, n in enumerate(time_nums):
+        if n > nums[0] * .5:
+            reshape_idx.append(idx)
+            idx += 1
+        else:
+            aug_num += n
+            reshape_idx.append(idx)
+
+        if aug_num > nums[0] * .5:
+            aug_num = 0
+            idx += 1
+    reshape_idx[reshape_idx.index(max(reshape_idx))] = max(reshape_idx)-1
+
+    # loop segmented quantilenorm
+    num_iteration = 0
+    error = 1
+    m = np.concatenate([np.zeros(stride), np.ones(segment_size-stride)])
+    m = np.tile(m, len(x)).astype(bool)
+    while error > error_criterion and num_iteration < max_iter:
+        # reshape by size
+        max_size = max([reshape_idx.count(i) for i in range(max(reshape_idx)+1)])
+        ss = np.empty([len(x) * segment_size * max_size, max(reshape_idx)+1])
+        ss[:] = np.nan
+        for i in range(max(reshape_idx)+1):
+            idx = np.where(np.array(reshape_idx) == i)[0]
+            ss[:len(ts[:, idx].reshape(-1, order="F")), i] = ts[:, idx].reshape(-1, order="F")
+
+        ss = quantilenorm(ss) # quantilenorm
+
+        # reshape to original
+        count = 0
+        for i in range(max(reshape_idx)+1):
+            idx = np.where(np.array(reshape_idx) == i)[0]
+            for j in range(len(idx)):
+                ts[:, count] = ss[(len(x)*segment_size)*j:(len(x)*segment_size)*(j+1), i].ravel()
+                count += 1
+
+        error = 0
+        ts_before = ts.copy()
+        for i in range(ts.shape[1]-1):
+            t1 = ts_before[:, i]
+            t2 = ts_before[:, i+1]
+            t2 = np.roll(t2, stride)
+
+            # allocate mean
+            mean = np.nanmean([t1, t2], axis=0)
+
+            ts[stride:, i][m[stride:]] = mean[stride:][m[stride:]]
+            ts[:-stride, i+1][m[stride:]] = mean[stride:][m[stride:]]
+
+            # calculate error
+            e = np.sqrt((t2 - t1) ** 2)
+            e = np.nansum(e * m)
+            error += e
+
+        num_iteration += 1
+        error = error / number_of_comparisons
+
+    # reconstruct
+    m = np.concatenate([np.ones(stride), np.zeros(segment_size-stride)])
+    m = np.tile(m, max_nums)
+    m = np.concatenate([np.ones(segment_size-stride), m]).astype(bool)
+    for i, p in enumerate(x_norm):
+        t = ts[segment_size*i:segment_size*(i+1)].reshape(-1, order="F")
+        x_norm[i] = t[m[:len(t)]][:len(p)].tolist()
+
+    return x_norm, num_iteration, error
 
 
 if __name__ == "__main__":
