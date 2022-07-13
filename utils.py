@@ -73,7 +73,11 @@ def quantilenorm(x, average="mean"):
     return x_norm
 
 
-def segmented_quantile_normalization(x, segment_size=4, stride=2, error_criterion=1e-4, max_iter=100):
+def segmented_quantile_normalization(x,
+                                     segment_size=4,
+                                     stride=2,
+                                     error_criterion=1e-4,
+                                     max_iter=100):
     """
     Performs segmented 2d quantile normalization.
 
@@ -114,9 +118,6 @@ def segmented_quantile_normalization(x, segment_size=4, stride=2, error_criterio
     max_nums = max(nums)
     time_nums = [np.sum(nums > i) for i in range(max(nums))]
 
-    # count number of comparisons
-    number_of_comparisons = sum((nums-1) * (segment_size-strid))
-
     # reshape by time
     ts = np.empty([len(x) * segment_size, max_nums])
     ts[:] = np.nan
@@ -146,6 +147,7 @@ def segmented_quantile_normalization(x, segment_size=4, stride=2, error_criterio
     error = 1
     m = np.concatenate([np.zeros(stride), np.ones(segment_size-stride)])
     m = np.tile(m, len(x)).astype(bool)
+
     while error > error_criterion and num_iteration < max_iter:
         # reshape by size
         max_size = max([reshape_idx.count(i) for i in range(max(reshape_idx)+1)])
@@ -165,11 +167,13 @@ def segmented_quantile_normalization(x, segment_size=4, stride=2, error_criterio
                 ts[:, count] = ss[(len(x)*segment_size)*j:(len(x)*segment_size)*(j+1), i].ravel()
                 count += 1
 
-        error = 0
+        errors = []
         ts_before = ts.copy()
         for i in range(ts.shape[1]-1):
             t1 = ts_before[:, i]
             t2 = ts_before[:, i+1]
+            m1 = np.isnan(t1)
+            m2 = np.isnan(t2)
             t2 = np.roll(t2, stride)
 
             # allocate mean
@@ -177,14 +181,18 @@ def segmented_quantile_normalization(x, segment_size=4, stride=2, error_criterio
 
             ts[stride:, i][m[stride:]] = mean[stride:][m[stride:]]
             ts[:-stride, i+1][m[stride:]] = mean[stride:][m[stride:]]
+            ts[:, i][m1] = np.nan
+            ts[:, i+1][m2] = np.nan
 
             # calculate error
+            me1 = ~m1 & m
+            me2 = ~np.roll(m2, stride) & m
+            me = me1 & me2
             e = np.sqrt((t2 - t1) ** 2)
-            e = np.nansum(e * m)
-            error += e
+            errors.append(e[me])
 
+        error = np.concatenate(errors).mean()
         num_iteration += 1
-        error = error / number_of_comparisons
 
     # reconstruct
     m = np.concatenate([np.ones(stride), np.zeros(segment_size-stride)])
