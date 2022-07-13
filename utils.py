@@ -42,13 +42,10 @@ def quantilenorm(x, average="mean"):
     x[np.isnan(x)] = np.inf
 
     rr = []
-    x_sorted = np.zeros([r, c])
-    idx_sorted = np.zeros([r, c], dtype=np.intp)
+    x_sorted = np.sort(x, axis=0)
+    idx_sorted = np.argsort(x, axis=0)
     x_ranked = np.zeros([r, c])
     for i in range(c):
-        x_sorted[:, i] = np.sort(x[:, i])
-        idx_sorted[:, i] = np.argsort(x[:, i])
-
         ranked = rankdata(x[:, i][~x_nan[:, i]])
         rr.append(np.sort(ranked))
 
