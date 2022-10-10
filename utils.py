@@ -70,14 +70,9 @@ def quantilenorm(x, average="mean"):
     return x_norm
 
 
-def segmented_quantile_normalization(x,
-                                     segment_size=4,
-                                     stride=2,
-                                     error_criterion=1e-4,
-                                     max_iter=100):
+def segmented_quantile_normalization(x, segment_size=4, stride=2, error_criterion=1e-4, max_iter=100):
     """
     Performs segmented 2d quantile normalization.
-
     Arguments:
         x: list of list
             input time series.
@@ -89,66 +84,86 @@ def segmented_quantile_normalization(x,
             stop iteration criterion.
         max_iter: int, default=100
             maximum iteration steps.
-
     Returns:
         x: list of list
             normalized time series.
         num_iteration: int
             number of iterations. max_iter if not converged.
-        error: float
-            Root Mean Squared Error
+        error: list
+            Root Mean Squared Errors
     """
 
-    x_norm = x.copy()
+
+    x_original = x.copy()
+
+    # remove NaN paddings
+    x_clean = []
+    for p in x:
+        valid = ~np.isnan(p)
+        if np.sum(valid) > 0:
+            p = p[np.argmax(valid):len(valid)-np.argmax(valid[::-1])]
+            x_clean.append(p)
+
     # padding according to segment_size, stride
-    for i, p in enumerate(x):
+    for i, p in enumerate(x_clean):
         if len(p) < segment_size:
             num = segment_size - len(p)
         elif (segment_size-len(p)) % stride != 0:
             num = (segment_size-len(p)) % stride
         else:
             num = 0
-        x[i] = p + [np.nan] * num
-
-    # get number of occurrences for each time
-    nums = (((np.array(list(map(len, x)))) - segment_size) / stride + 1).astype(int)
-    max_nums = max(nums)
-    time_nums = [np.sum(nums > i) for i in range(max(nums))]
+        x_clean[i] = p + [np.nan] * num
 
     # reshape by time
-    ts = np.empty([len(x) * segment_size, max_nums])
+    nums = (((np.array(list(map(len, x_clean)))) - segment_size) / stride + 1).astype(int)
+    max_nums = max(nums)
+
+    ts = np.empty([len(x_clean) * segment_size, max_nums])
     ts[:] = np.nan
-    for i, p in enumerate(x):
+    for i, p in enumerate(x_clean):
         for j in range(nums[i]):
             ts[segment_size*i:segment_size*(i+1), j] = p[stride*j:stride*j+segment_size]
 
-    # prepare reshape_idx for: reshape by size
-    idx = 0
-    aug_num = 0
+    # prepare reshape_idx for: reshape by valid
+    valid = np.sum(~np.isnan(ts), axis=0)
+    size_criterion = valid[0] * .5
+
     reshape_idx = []
-    for i, n in enumerate(time_nums):
-        if n > nums[0] * .5:
+    aug_v, idx = 0, 0
+    for i in range(max_nums):
+        v = valid[i]
+        if v > size_criterion:
             reshape_idx.append(idx)
             idx += 1
         else:
-            aug_num += n
+            aug_v += v
             reshape_idx.append(idx)
 
-        if aug_num > nums[0] * .5:
-            aug_num = 0
+        if aug_v > size_criterion:
+            aug_v = 0
             idx += 1
-    reshape_idx[reshape_idx.index(max(reshape_idx))] = max(reshape_idx)-1
+
+    # check last idx
+    max_idx = max(reshape_idx)
+    if max_idx == 0:
+        warnings.warn(f"Not enough data for each series to quantile normalize.")
+        return x_original, 0, [0]
+
+    v_idx = [i for i, j in enumerate(reshape_idx) if j == max_idx]
+    v_count = np.sum(~np.isnan(ts[:, v_idx]))
+    if (max_idx != 1) and (v_count <= size_criterion):
+        reshape_idx = [max_idx-1 if i == max_idx else i for i in reshape_idx]
 
     # loop segmented quantilenorm
     num_iteration = 0
-    error = 1
+    error, errors = 1, []
     m = np.concatenate([np.zeros(stride), np.ones(segment_size-stride)])
-    m = np.tile(m, len(x)).astype(bool)
-
+    m = np.tile(m, len(x_clean)).astype(bool)
     while error > error_criterion and num_iteration < max_iter:
+
         # reshape by size
         max_size = max([reshape_idx.count(i) for i in range(max(reshape_idx)+1)])
-        ss = np.empty([len(x) * segment_size * max_size, max(reshape_idx)+1])
+        ss = np.empty([len(x_clean) * segment_size * max_size, max(reshape_idx)+1])
         ss[:] = np.nan
         for i in range(max(reshape_idx)+1):
             idx = np.where(np.array(reshape_idx) == i)[0]
@@ -161,10 +176,10 @@ def segmented_quantile_normalization(x,
         for i in range(max(reshape_idx)+1):
             idx = np.where(np.array(reshape_idx) == i)[0]
             for j in range(len(idx)):
-                ts[:, count] = ss[(len(x)*segment_size)*j:(len(x)*segment_size)*(j+1), i].ravel()
+                ts[:, count] = ss[(len(x_clean)*segment_size)*j:(len(x_clean)*segment_size)*(j+1), i].ravel()
                 count += 1
 
-        errors = []
+        es = []
         ts_before = ts.copy()
         for i in range(ts.shape[1]-1):
             t1 = ts_before[:, i]
@@ -186,20 +201,32 @@ def segmented_quantile_normalization(x,
             me2 = ~np.roll(m2, stride) & m
             me = me1 & me2
             e = np.sqrt((t2 - t1) ** 2)
-            errors.append(e[me])
+            es.append(e[me])
 
-        error = np.concatenate(errors).mean()
+        error = np.concatenate(es).mean()
+        errors.append(error)
         num_iteration += 1
 
     # reconstruct
+    x_norm = []
     m = np.concatenate([np.ones(stride), np.zeros(segment_size-stride)])
     m = np.tile(m, max_nums)
     m = np.concatenate([np.ones(segment_size-stride), m]).astype(bool)
-    for i, p in enumerate(x_norm):
-        t = ts[segment_size*i:segment_size*(i+1)].reshape(-1, order="F")
-        x_norm[i] = t[m[:len(t)]][:len(p)].tolist()
 
-    return x_norm, num_iteration, error
+    idx = 0
+    for p in x_original:
+        xn = np.array(p.copy())
+        valid = ~np.isnan(xn)
+        if np.sum(valid) == 0:
+            x_norm.append(xn)
+        else:
+            t = ts[segment_size*idx:segment_size*(idx+1)].reshape(-1, order="F")
+            t = t[m[:len(t)]]
+            xn[~np.isnan(xn)] = t[~np.isnan(t)]
+            x_norm.append(xn)
+            idx += 1
+
+    return x_norm, num_iteration, errors)
 
 
 if __name__ == "__main__":
